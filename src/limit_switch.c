@@ -2,6 +2,7 @@
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
 #include "../include/delta_robot.h"
+#include "../include/stepper_control.h"
 
 /* Interrupt numbers for the limit switches; these would be determined via GPIO mappings */
 static int irq_limit1, irq_limit2, irq_limit3;

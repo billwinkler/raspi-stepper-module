@@ -4,6 +4,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include "../include/delta_robot.h"
+#include "../include/stepper_control.h"
 
 /* Forward declarations for submodule initializations */
 extern int limit_switch_init(void);
@@ -23,9 +24,8 @@ static ssize_t delta_robot_write(struct file *file, const char __user *buf,
     int num_cmds;
     int *kbuf;
     int i, offset;
-    size_t cmd_size = sizeof(int) * 6; // 6 ints per command
+    size_t cmd_size = sizeof(struct delta_robot_cmd);
 
-    // The total count must be a multiple of 6 ints.
     if (count % cmd_size != 0) {
         printk(KERN_ERR "delta_robot: Command size %zu is not a multiple of %zu bytes\n",
                count, cmd_size);
@@ -48,25 +48,25 @@ static ssize_t delta_robot_write(struct file *file, const char __user *buf,
     }
 
     printk(KERN_INFO "delta_robot: Received %d motor command(s)\n", num_cmds);
+
     offset = 0;
     for (i = 0; i < num_cmds; i++) {
-        int motor_id     = kbuf[offset++];
-        int total_pulses = kbuf[offset++];
-        int target_freq  = kbuf[offset++];
-        int accel_pulses = kbuf[offset++];
-        int decel_pulses = kbuf[offset++];
-        int direction    = kbuf[offset++];
+        struct delta_robot_cmd cmd;
 
-        // Optionally validate motor_id if needed; for example, 0 to 2:
-        if (motor_id < 0 || motor_id > 2) {
-            printk(KERN_ERR "delta_robot: Invalid motor id %d\n", motor_id);
+        // Correctly copy the entire struct
+        memcpy(&cmd, &kbuf[offset], sizeof(struct delta_robot_cmd));
+        offset += cmd_size / sizeof(int);  // Move offset correctly
+
+        printk(KERN_INFO "delta_robot: Received command for motor_id=%d, total_pulses=%d, target_freq=%d\n",
+               cmd.motor_id, cmd.total_pulses, cmd.target_freq);
+
+        if (cmd.motor_id < 0 || cmd.motor_id > 2) {
+            printk(KERN_ERR "delta_robot: Invalid motor id %d\n", cmd.motor_id);
             kfree(kbuf);
             return -EINVAL;
         }
 
-        printk(KERN_INFO "Motor %d: total_pulses=%d, target_freq=%d, accel_pulses=%d, decel_pulses=%d, direction=%d\n",
-               motor_id, total_pulses, target_freq, accel_pulses, decel_pulses, direction);
-        /* TODO: Call start_motor_motion(motor_id, ...) with the command parameters */
+        start_motor_motion(cmd.motor_id, &cmd);
     }
 
     kfree(kbuf);
@@ -93,18 +93,14 @@ static int __init delta_robot_init(void)
     printk(KERN_INFO "Delta Robot Module: Initializing\n");
 
     ret = limit_switch_init();
-    if (ret) {
-        printk(KERN_ERR "Delta Robot Module: Failed to initialize limit switches\n");
-        return ret;
-    }
+    if (ret) return ret;
+
+    ret = stepper_init();
+    if (ret) return ret;
 
     ret = misc_register(&delta_robot_misc);
-    if (ret) {
-        printk(KERN_ERR "Delta Robot Module: misc_register failed: %d\n", ret);
-        return ret;
-    }
-    printk(KERN_INFO "Delta Robot Module: misc device registered as /dev/%s\n", delta_robot_misc.name);
-    printk(KERN_ALERT "delta_robot: write callback pointer = %p\n", delta_robot_fops.write);
+    if (ret) return ret;
+
     printk(KERN_INFO "Delta Robot Module: Initialization complete\n");
     return 0;
 }
@@ -112,6 +108,7 @@ static int __init delta_robot_init(void)
 static void __exit delta_robot_exit(void)
 {
     misc_deregister(&delta_robot_misc);
+    stepper_exit();
     limit_switch_exit();
     printk(KERN_INFO "Delta Robot Module: Exiting\n");
 }

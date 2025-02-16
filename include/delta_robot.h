@@ -22,17 +22,16 @@ struct motor_state {
     struct hrtimer timer;  /* Required for container_of in timer callback */
 };
 
-/* Declare the global motor_states array */
-extern struct motor_state motor_states[3];
-
 /* Define the command structure */
 struct delta_robot_cmd {
-    unsigned int total_pulses[3];
-    unsigned int target_freq[3];
-    unsigned int accel_pulses[3];
-    unsigned int decel_pulses[3];
-    unsigned int direction[3];
-};
+    int motor_id;       // Add motor ID to the struct
+    int total_pulses;
+    int target_freq;
+    int accel_pulses;
+    int decel_pulses;
+    int direction;
+} __attribute__((packed));  // Ensure correct memory alignment
+
 
 /* Prototype for starting motor motion */
 extern void start_motor_motion(int motor_index, struct delta_robot_cmd *cmd);
