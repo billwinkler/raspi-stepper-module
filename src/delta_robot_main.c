@@ -9,7 +9,8 @@
 /* Forward declarations for submodule initializations */
 extern int limit_switch_init(void);
 extern void limit_switch_exit(void);
-extern void start_motor_motion(int motor_index, struct delta_robot_cmd *cmd);
+extern void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds);
+void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd);
 
 /* Open callback */
 static int delta_robot_open(struct inode *inode, struct file *file)
@@ -22,8 +23,7 @@ static ssize_t delta_robot_write(struct file *file, const char __user *buf,
                                  size_t count, loff_t *ppos)
 {
     int num_cmds;
-    int *kbuf;
-    int i, offset;
+    struct delta_robot_cmd *cmds;
     size_t cmd_size = sizeof(struct delta_robot_cmd);
 
     if (count % cmd_size != 0) {
@@ -38,38 +38,21 @@ static ssize_t delta_robot_write(struct file *file, const char __user *buf,
         return -EINVAL;
     }
 
-    kbuf = kmalloc(count, GFP_KERNEL);
-    if (!kbuf)
+    cmds = kmalloc(count, GFP_KERNEL);
+    if (!cmds)
         return -ENOMEM;
 
-    if (copy_from_user(kbuf, buf, count)) {
-        kfree(kbuf);
+    if (copy_from_user(cmds, buf, count)) {
+        kfree(cmds);
         return -EFAULT;
     }
 
-    printk(KERN_INFO "delta_robot: Received %d motor command(s)\n", num_cmds);
+    printk(KERN_INFO "delta_robot: Received %d motor command(s), executing in sync\n", num_cmds);
 
-    offset = 0;
-    for (i = 0; i < num_cmds; i++) {
-        struct delta_robot_cmd cmd;
+    // ✅ Call the function only once with all motor commands
+    start_synchronized_motion(cmds, num_cmds);
 
-        // Correctly copy the entire struct
-        memcpy(&cmd, &kbuf[offset], sizeof(struct delta_robot_cmd));
-        offset += cmd_size / sizeof(int);  // Move offset correctly
-
-        printk(KERN_INFO "delta_robot: Received command for motor_id=%d, total_pulses=%d, target_freq=%d\n",
-               cmd.motor_id, cmd.total_pulses, cmd.target_freq);
-
-        if (cmd.motor_id < 0 || cmd.motor_id > 2) {
-            printk(KERN_ERR "delta_robot: Invalid motor id %d\n", cmd.motor_id);
-            kfree(kbuf);
-            return -EINVAL;
-        }
-
-        start_motor_motion(cmd.motor_id, &cmd);
-    }
-
-    kfree(kbuf);
+    kfree(cmds);
     return count;
 }
 
