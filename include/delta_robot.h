@@ -24,14 +24,10 @@ struct motor_state {
 
 /* Define the command structure */
 struct delta_robot_cmd {
-    int motor_id;       // Add motor ID to the struct
+    int motor_id;
     int total_pulses;
-    int target_freq;
-    int accel_pulses;
-    int decel_pulses;
     int direction;
-} __attribute__((packed));  // Ensure correct memory alignment
-
+} __attribute__((packed));
 
 /* Prototype for starting motor motion */
 extern void start_motor_motion(int motor_index, struct delta_robot_cmd *cmd);
