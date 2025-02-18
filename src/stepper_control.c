@@ -6,11 +6,11 @@
 #include "../include/delta_robot.h"
 #include "../include/stepper_control.h"
 
-/* Global motor state array */
+// Global motor state array: now using macros from the config file
 struct stepper_motor motor_states[MOTOR_COUNT] = {
-    { .id = 0, .gpio_step = 17, .gpio_dir = 27 },
-    { .id = 1, .gpio_step = 18, .gpio_dir = 23 },
-    { .id = 2, .gpio_step = 19, .gpio_dir = 25 }
+    { .id = 0, .gpio_step = CONFIG_MOTOR0_STEP_PIN, .gpio_dir = CONFIG_MOTOR0_DIR_PIN },
+    { .id = 1, .gpio_step = CONFIG_MOTOR1_STEP_PIN, .gpio_dir = CONFIG_MOTOR1_DIR_PIN },
+    { .id = 2, .gpio_step = CONFIG_MOTOR2_STEP_PIN, .gpio_dir = CONFIG_MOTOR2_DIR_PIN }
 };
 
 int stepper_init(void)
@@ -90,9 +90,9 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
     int base_delay;
 
     /* Check current limit switch states */
-    ls1_state = gpio_get_value(LIMIT_SWITCH1_PIN);
-    ls2_state = gpio_get_value(LIMIT_SWITCH2_PIN);
-    ls3_state = gpio_get_value(LIMIT_SWITCH3_PIN);
+    ls1_state = gpio_get_value(CONFIG_LIMIT_SWITCH1_PIN);
+    ls2_state = gpio_get_value(CONFIG_LIMIT_SWITCH2_PIN);
+    ls3_state = gpio_get_value(CONFIG_LIMIT_SWITCH3_PIN);
     printk(KERN_DEBUG "Starting movement: Limit Switch States: LS1=%d, LS2=%d, LS3=%d\n",
            ls1_state, ls2_state, ls3_state);
 

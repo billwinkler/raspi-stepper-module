@@ -4,11 +4,7 @@
 #include <linux/ktime.h>
 #include <linux/hrtimer.h>
 #include <stdbool.h>
-
-/* Limit switch pin definitions */
-#define LIMIT_SWITCH1_PIN 22
-#define LIMIT_SWITCH2_PIN 24
-#define LIMIT_SWITCH3_PIN 26
+#include "delta_robot_config.h"  // All pin definitions come from here
 
 /* Define the motor state structure, including a timer member */
 struct motor_state {
