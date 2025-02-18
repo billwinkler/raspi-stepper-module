@@ -59,7 +59,6 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
     motor = &motor_states[motor_id];  // Assign the correct motor
 
     motor->total_pulses = cmd->total_pulses;
-    motor->target_freq  = cmd->target_freq;
     motor->target_freq  = CONFIG_MAX_FREQUENCY;
     motor->accel_pulses = CONFIG_ACCELERATION_PULSES;
     motor->decel_pulses = CONFIG_DECELERATION_PULSES;
