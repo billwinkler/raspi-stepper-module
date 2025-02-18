@@ -3,6 +3,8 @@
 #include <linux/miscdevice.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/gpio.h>
+#include <linux/delay.h>
 #include "../include/delta_robot.h"
 #include "../include/stepper_control.h"
 
@@ -17,6 +19,25 @@ static int delta_robot_open(struct inode *inode, struct file *file)
 {
     printk(KERN_ALERT "delta_robot: Device opened\n");
     return 0;
+}
+
+static void test_gpio_toggle(void)
+{
+    int i;
+    int gpio = motor_states[1].gpio_step;  // Use motor 1's step pin for testing
+    printk(KERN_INFO "test_gpio_toggle: Starting toggle test on GPIO %d\n", gpio);
+
+    for (i = 0; i < 10; i++) {
+        gpio_set_value(gpio, 1);
+        printk(KERN_INFO "test_gpio_toggle: Iteration %d - GPIO %d set HIGH\n", i, gpio);
+        msleep(500);  // Sleep for 500 milliseconds
+
+        gpio_set_value(gpio, 0);
+        printk(KERN_INFO "test_gpio_toggle: Iteration %d - GPIO %d set LOW\n", i, gpio);
+        msleep(500);  // Sleep for 500 milliseconds
+    }
+
+    printk(KERN_INFO "test_gpio_toggle: Toggle test complete.\n");
 }
 
 static ssize_t delta_robot_write(struct file *file, const char __user *buf,
@@ -84,6 +105,9 @@ static int __init delta_robot_init(void)
     ret = misc_register(&delta_robot_misc);
     if (ret) return ret;
 
+   // Call the test function
+    test_gpio_toggle();
+
     printk(KERN_INFO "Delta Robot Module: Initialization complete\n");
     return 0;
 }
@@ -102,3 +126,4 @@ module_exit(delta_robot_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Bill Winkler");
 MODULE_DESCRIPTION("Delta Robot Control Module with Stepper and Limit Switch Integration");
+MODULE_VERSION("1.0.0");
