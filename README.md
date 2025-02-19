@@ -45,3 +45,72 @@ This repository contains a Linux kernel module designed for controlling stepper 
    ```bash
    git clone https://github.com/billwinkler/raspi-stepper-module.git
    cd raspi-stepper-module
+2. **Build the Module:**
+   A Makefile is provided. Compile the module by running:
+   ```bash
+   make
+3. **Load the Kernel Module:**
+Insert the module into the kernel:
+   ```bash
+   sudo insmod delta_robot.ko
+   
+4. **Verify the Module:**
+   Check that the module has loaded correctly:
+   ```bash
+   lsmod | grep delta_robot
+   dmesg | tail
+   
+   The module creates a device file at `/dev/delta_robot` for user-space interaction.
+   
+## Configuration
+
+This module includes several configurable settings that you may need to adjust to match your hardware setup. The key configuration options are:
+
+- **GPIO Pin Assignments:**
+  - **Limit Switches:**  
+    The GPIO pins for the limit switches are defined in [delta_robot.h]&#8203;:contentReference[oaicite:0]{index=0}:
+    - `LIMIT_SWITCH1_PIN` (default: 22)
+    - `LIMIT_SWITCH2_PIN` (default: 24)
+    - `LIMIT_SWITCH3_PIN` (default: 26)
+  
+  - **Stepper Motor Control:**  
+    The step and direction GPIO pins for each motor are configured in the `motor_states` array in [stepper_control.c]&#8203;:contentReference[oaicite:1]{index=1}:
+    - **Motor 0:**  
+      - Step Pin: 17  
+      - Direction Pin: 27
+    - **Motor 1:**  
+      - Step Pin: 18  
+      - Direction Pin: 23
+    - **Motor 2:**  
+      - Step Pin: 19  
+      - Direction Pin: 25
+
+- **Motor Command Parameters:**
+  The command structure for motor control is defined in [delta_robot.h]&#8203;:contentReference[oaicite:2]{index=2}. The revised command structure now includes:
+  - **Motor ID:** Identifies which motor to control.
+  - **Total Pulses:** Specifies the number of pulses to be sent.
+  - **Direction:** Determines the direction of rotation.
+
+- **Compile-Time and Build Options:**
+  - Check and modify the Makefile if needed to match your kernel version or to resolve any GPIO conflicts.
+  - Ensure that any changes to the default GPIO assignments are reflected both in the source code and in your hardware wiring.
+
+Review these settings before building and loading the module to ensure that they align with your specific Raspberry Pi configuration and connected hardware.
+
+## Usage
+
+### Sending Commands
+
+Write delta robot command structures to `/dev/delta_robot` to control motor movement. The revised command structure now includes only the following parameters:
+
+- **Motor ID:** Specifies which motor to control.
+- **Total Pulses:** The number of pulses to send to the motor, which determines the distance or extent of movement.
+- **Direction:** Indicates the direction of movement (for example, `0` for one direction and `1` for the opposite).
+
+Format your command accordingly in your user-space application and write it to the device file `/dev/delta_robot`.
+
+### Testing
+
+Upon initialization, the module currently runs a test routine that toggles a motor's GPIO to confirm proper operation. Check the kernel logs (using `dmesg`) to verify that the command has been executed as expected.
+
+
