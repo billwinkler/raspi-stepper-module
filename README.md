@@ -107,7 +107,25 @@ Write delta robot command structures to `/dev/delta_robot` to control motor move
 - **Total Pulses:** The number of pulses to send to the motor, which determines the distance or extent of movement.
 - **Direction:** Indicates the direction of movement (for example, `0` for one direction and `1` for the opposite).
 
-Format your command accordingly in your user-space application and write it to the device file `/dev/delta_robot`.
+Each command is therefore 12 bytes in total (assuming 4 bytes per integer). Here are some important points to consider when creating your binary file:
+
+- **No Padding:**  
+  Ensure that the structure is packed without any extra padding bytes. This is typically enforced using the `__attribute__((packed))` directive in the source code.
+
+- **Byte Order:**  
+  The integers should be stored in your system's native byte order. On a Raspberry Pi, this is usually little-endian. If you generate the binary file on a different system, be sure to convert the integers to little-endian format if necessary.
+
+- **Multiple Commands:**  
+  If you wish to send multiple commands in one operation (for example, three commands), the binary file should be a concatenation of the command structures. For three commands, the file should be 36 bytes long (3 commands × 12 bytes each).
+
+Once your binary file is formatted correctly, you can use the `dd` command to send the commands to the device. For example:
+
+#### Example using `dd`
+
+If you have prepared a binary file (for example, `/tmp/delta_robot.bin`) containing three motor commands (each command being 12 bytes, for a total of 36 bytes), you can send the commands to the device using the following command:
+
+```bash
+sudo dd if=/tmp/delta_robot.bin of=/dev/delta_robot bs=36 count=1
 
 ### Testing
 
