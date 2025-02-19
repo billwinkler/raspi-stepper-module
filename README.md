@@ -68,13 +68,13 @@ This module includes several configurable settings that you may need to adjust t
 
 - **GPIO Pin Assignments:**
   - **Limit Switches:**  
-    The GPIO pins for the limit switches are defined in [delta_robot.h]&#8203;:contentReference[oaicite:0]{index=0}:
+    The GPIO pins for the limit switches are defined in [delta_robot.h]:contentReference[oaicite:0]{index=0}:
     - `LIMIT_SWITCH1_PIN` (default: 22)
     - `LIMIT_SWITCH2_PIN` (default: 24)
     - `LIMIT_SWITCH3_PIN` (default: 26)
   
   - **Stepper Motor Control:**  
-    The step and direction GPIO pins for each motor are configured in the `motor_states` array in [stepper_control.c]&#8203;:contentReference[oaicite:1]{index=1}:
+    The step and direction GPIO pins for each motor are configured in the `motor_states` array in [stepper_control.c]:contentReference[oaicite:1]{index=1}:
     - **Motor 0:**  
       - Step Pin: 17  
       - Direction Pin: 27
@@ -86,7 +86,7 @@ This module includes several configurable settings that you may need to adjust t
       - Direction Pin: 25
 
 - **Motor Command Parameters:**
-  The command structure for motor control is defined in [delta_robot.h]&#8203;:contentReference[oaicite:2]{index=2}. The revised command structure now includes:
+  The command structure for motor control is defined in [delta_robot.h]:contentReference[oaicite:2]{index=2}. The revised command structure now includes:
   - **Motor ID:** Identifies which motor to control.
   - **Total Pulses:** Specifies the number of pulses to be sent.
   - **Direction:** Determines the direction of rotation.
@@ -126,6 +126,7 @@ If you have prepared a binary file (for example, `/tmp/delta_robot.bin`) contain
 
    ```bash
    sudo dd if=/tmp/delta_robot.bin of=/dev/delta_robot bs=36 count=1
+
 
 ### Testing
 
