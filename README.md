@@ -45,57 +45,76 @@ This repository contains a Linux kernel module designed for controlling stepper 
    ```bash
    git clone https://github.com/billwinkler/raspi-stepper-module.git
    cd raspi-stepper-module
+   ```
 2. **Build the Module:**
    A Makefile is provided. Compile the module by running:
    ```bash
    make
+   ```
 3. **Load the Kernel Module:**
 Insert the module into the kernel:
    ```bash
    sudo insmod delta_robot.ko
-   
+   ```
 4. **Verify the Module:**
    Check that the module has loaded correctly:
    ```bash
    lsmod | grep delta_robot
    dmesg | tail
-   
+   ```
    The module creates a device file at `/dev/delta_robot` for user-space interaction.
    
 ## Configuration
+## Configuration
 
-This module includes several configurable settings that you may need to adjust to match your hardware setup. The key configuration options are:
+The delta robot module's key parameters are centralized in the `delta_robot_config.h` file. This file lets you customize settings for motor control, limit switch pin assignments, and stepper motor GPIO configurations to match your specific hardware setup.
 
-- **GPIO Pin Assignments:**
-  - **Limit Switches:**  
-    The GPIO pins for the limit switches are defined in [delta_robot.h]:contentReference[oaicite:0]{index=0}:
-    - `LIMIT_SWITCH1_PIN` (default: 22)
-    - `LIMIT_SWITCH2_PIN` (default: 24)
-    - `LIMIT_SWITCH3_PIN` (default: 26)
-  
-  - **Stepper Motor Control:**  
-    The step and direction GPIO pins for each motor are configured in the `motor_states` array in [stepper_control.c]:contentReference[oaicite:1]{index=1}:
-    - **Motor 0:**  
-      - Step Pin: 17  
-      - Direction Pin: 27
-    - **Motor 1:**  
-      - Step Pin: 18  
-      - Direction Pin: 23
-    - **Motor 2:**  
-      - Step Pin: 19  
-      - Direction Pin: 25
+### Motor Control Parameters
 
-- **Motor Command Parameters:**
-  The command structure for motor control is defined in [delta_robot.h]:contentReference[oaicite:2]{index=2}. The revised command structure now includes:
-  - **Motor ID:** Identifies which motor to control.
-  - **Total Pulses:** Specifies the number of pulses to be sent.
-  - **Direction:** Determines the direction of rotation.
+- **CONFIG_MIN_FREQUENCY (100 Hz):**  
+  Specifies the minimum operating frequency for the stepper motors. Lower frequencies help ensure smooth startup and stable low-speed performance. This is intended to be (not yet implemented) the starting and ending frequencies for ramping up and down pulses during accleration and deceleration.
 
-- **Compile-Time and Build Options:**
-  - Check and modify the Makefile if needed to match your kernel version or to resolve any GPIO conflicts.
-  - Ensure that any changes to the default GPIO assignments are reflected both in the source code and in your hardware wiring.
+- **CONFIG_MAX_FREQUENCY (5000 Hz):**  
+  Sets the maximum frequency for the motors, which limits the top speed. It is used as the target frequency for the motors after accleration from the minimum specified frequency.
 
-Review these settings before building and loading the module to ensure that they align with your specific Raspberry Pi configuration and connected hardware.
+- **CONFIG_ACCELERATION_PULSES (200 pulses):**  
+  Determines the number of pulses used during the acceleration phase. This helps in gradually ramping up the motor speed, reducing mechanical stress.
+
+- **CONFIG_DECELERATION_PULSES (200 pulses):**  
+  Specifies the number of pulses during deceleration, ensuring a controlled slowdown to prevent overshooting or undue wear on the hardware.
+
+### Limit Switch Pin Definitions
+
+- **CONFIG_LIMIT_SWITCH1_PIN (22):**  
+  GPIO pin assigned for the first limit switch.
+
+- **CONFIG_LIMIT_SWITCH2_PIN (24):**  
+  GPIO pin assigned for the second limit switch.
+
+- **CONFIG_LIMIT_SWITCH3_PIN (26):**  
+  GPIO pin assigned for the third limit switch.
+
+These pins are used to monitor the position of the limit switches, which provide safety feedback by aborting motor movement when triggered (not yet implemenented).
+
+### Stepper Motor GPIO Pin Definitions
+
+Each motor uses a pair of GPIO pins to control its operation:
+
+- **Motor 0:**
+  - **CONFIG_MOTOR0_STEP_PIN (17):**  
+  - **CONFIG_MOTOR0_DIR_PIN (27):**  
+
+- **Motor 1:**
+  - **CONFIG_MOTOR1_STEP_PIN (18):**  
+  - **CONFIG_MOTOR1_DIR_PIN (23):**  
+
+- **Motor 2:**
+  - **CONFIG_MOTOR2_STEP_PIN (19):**  
+  - **CONFIG_MOTOR2_DIR_PIN (25):**  
+
+### Customizing the Configuration
+
+Before building and loading the module, review and modify `delta_robot_config.h` as needed to match your hardware configuration. Any changes in this file will directly affect the behavior of the motor control routines, the handling of limit switches, and the GPIO assignments used by the module.
 
 ## Usage
 
@@ -126,7 +145,7 @@ If you have prepared a binary file (for example, `/tmp/delta_robot.bin`) contain
 
    ```bash
    sudo dd if=/tmp/delta_robot.bin of=/dev/delta_robot bs=36 count=1
-
+   ```
 
 ### Testing
 
