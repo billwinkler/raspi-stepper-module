@@ -124,8 +124,8 @@ Once your binary file is formatted correctly, you can use the `dd` command to se
 
 If you have prepared a binary file (for example, `/tmp/delta_robot.bin`) containing three motor commands (each command being 12 bytes, for a total of 36 bytes), you can send the commands to the device using the following command:
 
-```bash
-sudo dd if=/tmp/delta_robot.bin of=/dev/delta_robot bs=36 count=1
+   ```bash
+   sudo dd if=/tmp/delta_robot.bin of=/dev/delta_robot bs=36 count=1
 
 ### Testing
 
