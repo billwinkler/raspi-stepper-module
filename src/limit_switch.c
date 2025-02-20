@@ -1,7 +1,6 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
-#include <linux/delay.h>  // Required for msleep
 #include "../include/delta_robot.h"
 #include "../include/delta_robot_config.h" 
 #include "../include/stepper_control.h"
@@ -11,8 +10,6 @@ static int irq_limit1, irq_limit2, irq_limit3;
 
 static irqreturn_t limit_switch1_isr(int irq, void *dev_id)
 {
-    msleep(5);  // Small delay to debounce the switch (adjust if needed)
-    
     if (gpio_get_value(CONFIG_LIMIT_SWITCH1_PIN) == 0) {  // Ensure it's still pressed
         if (motor_states[0].direction == 1) {  // Only stop if moving toward the switch
             printk(KERN_INFO "limit_switch1_isr: Limit switch 1 triggered, stopping motor 0\n");
@@ -25,8 +22,6 @@ static irqreturn_t limit_switch1_isr(int irq, void *dev_id)
 
 static irqreturn_t limit_switch2_isr(int irq, void *dev_id)
 {
-    msleep(5);
-
     if (gpio_get_value(CONFIG_LIMIT_SWITCH2_PIN) == 0) {
         if (motor_states[1].direction == 1) {  // Only stop if moving toward the switch
             printk(KERN_INFO "limit_switch2_isr: Limit switch 2 triggered, stopping motor 1\n");
@@ -39,8 +34,6 @@ static irqreturn_t limit_switch2_isr(int irq, void *dev_id)
 
 static irqreturn_t limit_switch3_isr(int irq, void *dev_id)
 {
-    msleep(5);
-
     if (gpio_get_value(CONFIG_LIMIT_SWITCH3_PIN) == 0) {
         if (motor_states[2].direction == 1) {  // Only stop if moving toward the switch
             printk(KERN_INFO "limit_switch3_isr: Limit switch 3 triggered, stopping motor 2\n");
