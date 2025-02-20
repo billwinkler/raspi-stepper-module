@@ -109,15 +109,14 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
         }
     }
 
-    /* Set each motor's direction */
-    for (i = 0; i < num_cmds; i++) {
-        gpio_set_value(motors[i]->gpio_dir, cmds[i].direction);
-        printk(KERN_DEBUG "Motor %d: Direction set to %d\n", cmds[i].motor_id, cmds[i].direction);
-    }
-
     /* Use the global configuration for frequency */
     base_delay = 1000000 / (2 * CONFIG_MAX_FREQUENCY);
-    printk(KERN_DEBUG "Base_delay: %d\n", base_delay);
+
+    for (i = 0; i < num_cmds; i++) {
+      gpio_set_value(motors[i]->gpio_dir, cmds[i].direction);
+      printk(KERN_DEBUG "Motor %d: Direction=%d, Total Pulses=%d, Base Delay=%d us\n",
+             cmds[i].motor_id, cmds[i].direction, cmds[i].total_pulses, base_delay);
+    }
 
     int accumulators[num_cmds];
     for (i = 0; i < num_cmds; i++) {
