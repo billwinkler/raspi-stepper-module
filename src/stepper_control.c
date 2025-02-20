@@ -56,12 +56,13 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
         return;
     }
 
-    motor = &motor_states[motor_id];  // Assign the correct motor
-
+    motor = &motor_states[motor_id];  // Get the motor instance
     motor->total_pulses = cmd->total_pulses;
     motor->target_freq  = CONFIG_MAX_FREQUENCY;
     motor->accel_pulses = CONFIG_ACCELERATION_PULSES;
     motor->decel_pulses = CONFIG_DECELERATION_PULSES;
+    motor->direction = cmd->direction;
+    motor->abort = false;  // Reset abort flag before starting motion
 
     printk(KERN_INFO "stepper_control: Moving motor %d for %d pulses at %d Hz\n",
            motor_id, motor->total_pulses, motor->target_freq);
@@ -70,6 +71,12 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
     pulse_delay_us = (motor->target_freq > 0) ? (1000000 / (2 * motor->target_freq)) : 0;
 
     for (i = 0; i < motor->total_pulses; i++) {
+        // **Check the abort flag**
+        if (motor->abort) {
+            printk(KERN_WARNING "stepper_control: Motor %d stopped due to limit switch\n", motor_id);
+            break;  // Stop motion
+        }
+
         gpio_set_value(motor->gpio_step, 1);
         udelay(pulse_delay_us);
         gpio_set_value(motor->gpio_step, 0);
@@ -78,10 +85,6 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
 
     printk(KERN_INFO "stepper_control: Motor %d motion complete\n", motor_id);
 }
-
-#include "../include/delta_robot_config.h"
-#include "../include/delta_robot.h"
-// ... (other includes)
 
 void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
     int ls1_state, ls2_state, ls3_state;
