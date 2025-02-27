@@ -14,66 +14,58 @@ struct stepper_motor motor_states[MOTOR_COUNT] = {
     { .id = 2, .gpio_step = CONFIG_MOTOR2_STEP_PIN, .gpio_dir = CONFIG_MOTOR2_DIR_PIN }
 };
 
-static ktime_t calculate_next_period(struct motor_state *state)
+#define NS_PER_SEC 1000000000LL
+
+static ktime_t calculate_next_period(struct stepper_motor *state)
 {
     unsigned int k = state->pulse_count;
     unsigned int total = state->total_pulses;
     unsigned int accel = state->accel_pulses;
     unsigned int decel = state->decel_pulses;
-    double f_min = CONFIG_MIN_FREQUENCY;
-    double f_max = CONFIG_MAX_FREQUENCY;
-    double f_k;
+    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY;
+    long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY;
+    long long period_accel = min_period;
+    long long period_decel = min_period;
 
     if (total <= 1 || k >= total)
         return ktime_set(0, 0);
 
-    // Acceleration frequency
-    double f_accel = f_max;
-    if (k < accel && accel > 1)
-        f_accel = f_min + (f_max - f_min) * ((double)k / (accel - 1));
-
-    // Deceleration frequency
-    double f_decel = f_max;
-    if (k >= total - decel && decel > 1)
-    {
+    if (k < accel && accel > 1) {
+        long long delta = (max_period - min_period) * k / (accel - 1);
+        period_accel = max_period - delta;
+    }
+    if (k >= total - decel && decel > 1) {
         unsigned int m = total - 1 - k;
-        f_decel = f_min + (f_max - f_min) * ((double)m / (decel - 1));
+        long long delta = (max_period - min_period) * m / (decel - 1);
+        period_decel = min_period + delta;
     }
 
-    // Take minimum frequency
-    f_k = (f_accel < f_decel) ? f_accel : f_decel;
-    if (f_k < f_min)
-        f_k = f_min; // Clamp to minimum frequency
+    long long period_k = (period_accel > period_decel) ? period_accel : period_decel;
+    if (period_k > max_period)
+        period_k = max_period;
 
-    // Convert to period in nanoseconds
-    return ktime_set(0, (long long)(1000000000.0 / f_k));
+    return ktime_set(0, period_k);
 }
 
 static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
 {
     struct stepper_motor *state = container_of(timer, struct stepper_motor, timer);
+    ktime_t next_period;
 
-    // Check if motion should stop
     if (state->pulse_count >= state->total_pulses || state->abort) {
         gpio_set_value(state->gpio_step, 0);
         return HRTIMER_NORESTART;
     }
 
-    // Generate pulse
     gpio_set_value(state->gpio_step, 1);
     udelay(PULSE_WIDTH_US);
     gpio_set_value(state->gpio_step, 0);
 
-    // Increment pulse count
     state->pulse_count++;
+    next_period = calculate_next_period(state);
 
-    // Calculate and schedule next pulse
-    ktime_t next_period = calculate_next_period(state);
     if (next_period > 0) {
-        ktime_t delay = ktime_sub(next_period, ktime_set(0, PULSE_WIDTH_US * 1000));
-        if (delay < 0)
-            delay = 0;
-        hrtimer_start(timer, delay, HRTIMER_MODE_REL);
+        hrtimer_start(timer, next_period, HRTIMER_MODE_REL);
         return HRTIMER_RESTART;
     }
 
