@@ -2,10 +2,11 @@
 #define DELTA_ROBOT_CONFIG_H
 
 /* Configuration parameters for motor control */
-#define CONFIG_MIN_FREQUENCY       100   // Minimum frequency (Hz)
-#define CONFIG_MAX_FREQUENCY       5000  // Maximum frequency (Hz)
-#define CONFIG_ACCELERATION_PULSES 200   // Number of pulses during acceleration
-#define CONFIG_DECELERATION_PULSES 200   // Number of pulses during deceleration
+#define PULSE_WIDTH_US 10          // Fixed pulse width in microseconds
+#define CONFIG_MIN_FREQUENCY       100.0   // Minimum frequency (Hz)
+#define CONFIG_MAX_FREQUENCY       5000.0  // Maximum frequency (Hz)
+#define CONFIG_ACCELERATION_PULSES 50   // Number of pulses during acceleration
+#define CONFIG_DECELERATION_PULSES 50   // Number of pulses during deceleration
 
 /* Limit switch pin definitions */
 #define CONFIG_LIMIT_SWITCH1_PIN   22

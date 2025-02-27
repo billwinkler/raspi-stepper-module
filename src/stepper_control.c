@@ -1,5 +1,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/ktime.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
 #include "../include/delta_robot_config.h"
@@ -13,90 +14,172 @@ struct stepper_motor motor_states[MOTOR_COUNT] = {
     { .id = 2, .gpio_step = CONFIG_MOTOR2_STEP_PIN, .gpio_dir = CONFIG_MOTOR2_DIR_PIN }
 };
 
+static ktime_t calculate_next_period(struct motor_state *state)
+{
+    unsigned int k = state->pulse_count;
+    unsigned int total = state->total_pulses;
+    unsigned int accel = state->accel_pulses;
+    unsigned int decel = state->decel_pulses;
+    double f_min = CONFIG_MIN_FREQUENCY;
+    double f_max = CONFIG_MAX_FREQUENCY;
+    double f_k;
+
+    if (total <= 1 || k >= total)
+        return ktime_set(0, 0);
+
+    // Acceleration frequency
+    double f_accel = f_max;
+    if (k < accel && accel > 1)
+        f_accel = f_min + (f_max - f_min) * ((double)k / (accel - 1));
+
+    // Deceleration frequency
+    double f_decel = f_max;
+    if (k >= total - decel && decel > 1)
+    {
+        unsigned int m = total - 1 - k;
+        f_decel = f_min + (f_max - f_min) * ((double)m / (decel - 1));
+    }
+
+    // Take minimum frequency
+    f_k = (f_accel < f_decel) ? f_accel : f_decel;
+    if (f_k < f_min)
+        f_k = f_min; // Clamp to minimum frequency
+
+    // Convert to period in nanoseconds
+    return ktime_set(0, (long long)(1000000000.0 / f_k));
+}
+
+static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
+{
+    struct stepper_motor *state = container_of(timer, struct stepper_motor, timer);
+
+    // Check if motion should stop
+    if (state->pulse_count >= state->total_pulses || state->abort) {
+        gpio_set_value(state->gpio_step, 0);
+        return HRTIMER_NORESTART;
+    }
+
+    // Generate pulse
+    gpio_set_value(state->gpio_step, 1);
+    udelay(PULSE_WIDTH_US);
+    gpio_set_value(state->gpio_step, 0);
+
+    // Increment pulse count
+    state->pulse_count++;
+
+    // Calculate and schedule next pulse
+    ktime_t next_period = calculate_next_period(state);
+    if (next_period > 0) {
+        ktime_t delay = ktime_sub(next_period, ktime_set(0, PULSE_WIDTH_US * 1000));
+        if (delay < 0)
+            delay = 0;
+        hrtimer_start(timer, delay, HRTIMER_MODE_REL);
+        return HRTIMER_RESTART;
+    }
+
+    return HRTIMER_NORESTART;
+}
+
 int stepper_init(void)
 {
     int i, ret;
     for (i = 0; i < MOTOR_COUNT; i++) {
+        // Request and configure step GPIO
         ret = gpio_request(motor_states[i].gpio_step, "step");
         if (ret) {
-            printk(KERN_ERR "stepper_control: Failed to request GPIO %d for step\n", motor_states[i].gpio_step);
-            return ret;
+            printk(KERN_ERR "stepper_control: Failed to request GPIO %d for step\n", 
+                   motor_states[i].gpio_step);
+            goto cleanup;
         }
+        gpio_direction_output(motor_states[i].gpio_step, 0);
+
+        // Request and configure direction GPIO
         ret = gpio_request(motor_states[i].gpio_dir, "dir");
         if (ret) {
-            printk(KERN_ERR "stepper_control: Failed to request GPIO %d for direction\n", motor_states[i].gpio_dir);
-            return ret;
+            printk(KERN_ERR "stepper_control: Failed to request GPIO %d for direction\n", 
+                   motor_states[i].gpio_dir);
+            gpio_free(motor_states[i].gpio_step);
+            goto cleanup;
         }
-
-        gpio_direction_output(motor_states[i].gpio_step, 0);
         gpio_direction_output(motor_states[i].gpio_dir, 0);
+
+        // Initialize hrtimer
+        hrtimer_init(&motor_states[i].timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+        motor_states[i].timer.function = motor_timer_callback;
+        motor_states[i].pulse_count = 0;
+        motor_states[i].abort = false;
     }
 
-    printk(KERN_INFO "stepper_control: GPIOs initialized for all motors\n");
+    printk(KERN_INFO "stepper_control: GPIOs and hrtimers initialized for all motors\n");
     return 0;
+
+cleanup:
+    // Clean up any successfully requested GPIOs on failure
+    for (i--; i >= 0; i--) {
+        gpio_free(motor_states[i].gpio_step);
+        gpio_free(motor_states[i].gpio_dir);
+    }
+    return ret;
 }
 
 void stepper_exit(void)
 {
     int i;
     for (i = 0; i < MOTOR_COUNT; i++) {
+        hrtimer_cancel(&motor_states[i].timer);
         gpio_free(motor_states[i].gpio_step);
         gpio_free(motor_states[i].gpio_dir);
     }
-    printk(KERN_INFO "stepper_control: GPIOs freed\n");
+    printk(KERN_INFO "stepper_control: GPIOs freed and timers canceled\n");
 }
 
-void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
+void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd)
+{
     struct stepper_motor *motor;
-    int pulse_delay_us, i;
     int limit_switch_pin;
 
+    // Validate motor ID
     if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
         printk(KERN_ERR "stepper_control: Invalid motor id %d\n", motor_id);
         return;
     }
 
     motor = &motor_states[motor_id];
+
+    // Set motor parameters
+    motor->direction = cmd->direction;
     motor->total_pulses = cmd->total_pulses;
-    motor->target_freq  = CONFIG_MAX_FREQUENCY;
     motor->accel_pulses = CONFIG_ACCELERATION_PULSES;
     motor->decel_pulses = CONFIG_DECELERATION_PULSES;
-    motor->direction = cmd->direction;
+    motor->pulse_count = 0;
     motor->abort = false;
 
-    // Assign limit switch pin based on motor ID
+    // Set direction GPIO
+    gpio_set_value(motor->gpio_dir, motor->direction);
+
+    // Determine limit switch pin
     switch (motor_id) {
         case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
         case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
         case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
-        default: return;
+        default: return; // Shouldn’t happen due to prior validation
     }
 
-    // Check if moving toward switch and switch is closed
+    // Pre-check limit switch
     if (motor->direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
-        printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch already triggered\n", motor_id);
+        printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch already triggered\n", 
+               motor_id);
         return;
     }
 
-    printk(KERN_INFO "stepper_control: Moving motor %d for %d pulses at %d Hz\n",
-           motor_id, motor->total_pulses, motor->target_freq);
+    // Log motion start
+    printk(KERN_INFO "stepper_control: Starting motor %d for %d pulses, direction %d\n",
+           motor_id, motor->total_pulses, motor->direction);
 
-    gpio_set_value(motor->gpio_dir, motor->direction);
-    pulse_delay_us = (motor->target_freq > 0) ? (1000000 / (2 * motor->target_freq)) : 0;
-
-    for (i = 0; i < motor->total_pulses; i++) {
-        if (motor->abort) {
-            printk(KERN_WARNING "stepper_control: Motor %d stopped due to limit switch\n", motor_id);
-            break;
-        }
-        gpio_set_value(motor->gpio_step, 1);
-        udelay(pulse_delay_us);
-        gpio_set_value(motor->gpio_step, 0);
-        udelay(pulse_delay_us);
-    }
-
-    printk(KERN_INFO "stepper_control: Motor %d motion complete\n", motor_id);
+    // Start the hrtimer
+    hrtimer_start(&motor->timer, ktime_set(0, 0), HRTIMER_MODE_REL);
 }
+
 
 void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
     struct stepper_motor *motors[MOTOR_COUNT];  // Array of motor states

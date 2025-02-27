@@ -6,16 +6,18 @@
 #define MOTOR_COUNT 3
 
 /* Define stepper motor structure */
+
 struct stepper_motor {
-    int id;
-    int total_pulses;
-    int target_freq;
-    int accel_pulses;
-    int decel_pulses;
-    int direction;
-    int gpio_step;
-    int gpio_dir;
-    bool abort;
+    int id;                // Motor identifier
+    int gpio_step;         // GPIO pin for step signal
+    int gpio_dir;          // GPIO pin for direction
+    int direction;         // Motion direction (0 or 1)
+    int total_pulses;      // Total pulses to generate
+    int accel_pulses;      // Number of pulses for acceleration
+    int decel_pulses;      // Number of pulses for deceleration
+    int pulse_count;       // Current pulse count
+    bool abort;            // Flag to abort motion
+    struct hrtimer timer;  // HRTimer for pulse scheduling
 };
 
 /* Declare motor_states globally so other modules can use it */
