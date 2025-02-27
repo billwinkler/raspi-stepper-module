@@ -48,21 +48,35 @@ void stepper_exit(void)
 
 void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
     struct stepper_motor *motor;
-    int pulse_delay_us;
-    int i;
+    int pulse_delay_us, i;
+    int limit_switch_pin;
 
     if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
         printk(KERN_ERR "stepper_control: Invalid motor id %d\n", motor_id);
         return;
     }
 
-    motor = &motor_states[motor_id];  // Get the motor instance
+    motor = &motor_states[motor_id];
     motor->total_pulses = cmd->total_pulses;
     motor->target_freq  = CONFIG_MAX_FREQUENCY;
     motor->accel_pulses = CONFIG_ACCELERATION_PULSES;
     motor->decel_pulses = CONFIG_DECELERATION_PULSES;
     motor->direction = cmd->direction;
-    motor->abort = false;  // Reset abort flag before starting motion
+    motor->abort = false;
+
+    // Assign limit switch pin based on motor ID
+    switch (motor_id) {
+        case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
+        case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
+        case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
+        default: return;
+    }
+
+    // Check if moving toward switch and switch is closed
+    if (motor->direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
+        printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch already triggered\n", motor_id);
+        return;
+    }
 
     printk(KERN_INFO "stepper_control: Moving motor %d for %d pulses at %d Hz\n",
            motor_id, motor->total_pulses, motor->target_freq);
@@ -71,12 +85,10 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
     pulse_delay_us = (motor->target_freq > 0) ? (1000000 / (2 * motor->target_freq)) : 0;
 
     for (i = 0; i < motor->total_pulses; i++) {
-        // **Check the abort flag**
         if (motor->abort) {
             printk(KERN_WARNING "stepper_control: Motor %d stopped due to limit switch\n", motor_id);
-            break;  // Stop motion
+            break;
         }
-
         gpio_set_value(motor->gpio_step, 1);
         udelay(pulse_delay_us);
         gpio_set_value(motor->gpio_step, 0);
@@ -87,62 +99,95 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd) {
 }
 
 void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
-    int ls1_state, ls2_state, ls3_state;
-    struct stepper_motor *motors[MOTOR_COUNT];
+    struct stepper_motor *motors[MOTOR_COUNT];  // Array of motor states
     int i, j, max_pulses = 0;
     int base_delay;
+    int accumulators[num_cmds];
+    bool active[num_cmds];  // Tracks which motors are still active
 
-    /* Check current limit switch states */
-    ls1_state = gpio_get_value(CONFIG_LIMIT_SWITCH1_PIN);
-    ls2_state = gpio_get_value(CONFIG_LIMIT_SWITCH2_PIN);
-    ls3_state = gpio_get_value(CONFIG_LIMIT_SWITCH3_PIN);
-    printk(KERN_DEBUG "Starting movement: Limit Switch States: LS1=%d, LS2=%d, LS3=%d\n",
-           ls1_state, ls2_state, ls3_state);
-
-    /* Clear abort flags */
-    motor_states[0].abort = false;
-    motor_states[1].abort = false;
-    motor_states[2].abort = false;
-
-    /* Determine maximum pulses among the commands */
+    // Step 1: Initialize motors and pre-check limit switches
     for (i = 0; i < num_cmds; i++) {
-        motors[i] = &motor_states[cmds[i].motor_id];
-        if (cmds[i].total_pulses > max_pulses) {
-            max_pulses = cmds[i].total_pulses;
+        int motor_id = cmds[i].motor_id;
+        int direction = cmds[i].direction;
+        int limit_switch_pin;
+
+        // Map motor ID to its limit switch pin
+        switch (motor_id) {
+            case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
+            case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
+            case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
+            default: continue;
+        }
+
+        // Pre-check: If moving toward the limit (direction == 1) and switch is closed, suppress motion
+        if (direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
+            printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch already triggered\n", motor_id);
+            active[i] = false;  // This motor won’t move
+        } else {
+            active[i] = true;   // This motor is active
+            motor_states[motor_id].abort = false;  // Reset abort flag
+            motor_states[motor_id].direction = direction;
+            motors[i] = &motor_states[motor_id];
+            if (cmds[i].total_pulses > max_pulses) {
+                max_pulses = cmds[i].total_pulses;  // Find longest motion
+            }
         }
     }
 
-    /* Use the global configuration for frequency */
-    base_delay = 1000000 / (2 * CONFIG_MAX_FREQUENCY);
+    // Log limit switch states for debugging
+    printk(KERN_DEBUG "Starting synchronized motion: LS1=%d, LS2=%d, LS3=%d\n",
+           gpio_get_value(CONFIG_LIMIT_SWITCH1_PIN),
+           gpio_get_value(CONFIG_LIMIT_SWITCH2_PIN),
+           gpio_get_value(CONFIG_LIMIT_SWITCH3_PIN));
 
+    base_delay = 1000000 / (2 * CONFIG_MAX_FREQUENCY);  // Pulse timing in microseconds
+
+    // Step 2: Set direction for active motors
     for (i = 0; i < num_cmds; i++) {
-      gpio_set_value(motors[i]->gpio_dir, cmds[i].direction);
-      printk(KERN_DEBUG "Motor %d: Direction=%d, Total Pulses=%d, Base Delay=%d us\n",
-             cmds[i].motor_id, cmds[i].direction, cmds[i].total_pulses, base_delay);
+        if (active[i]) {
+            gpio_set_value(motors[i]->gpio_dir, cmds[i].direction);
+            printk(KERN_DEBUG "Motor %d: Direction=%d, Pulses=%d\n",
+                   cmds[i].motor_id, cmds[i].direction, cmds[i].total_pulses);
+        }
     }
 
-    int accumulators[num_cmds];
+    // Step 3: Initialize accumulators for pulse scaling
     for (i = 0; i < num_cmds; i++) {
         accumulators[i] = 0;
     }
 
-    /* Synchronized pulse generation loop */
+    // Step 4: Synchronized pulse loop
     for (j = 0; j < max_pulses; j++) {
+        // Generate pulses for active motors that haven’t aborted
         for (i = 0; i < num_cmds; i++) {
-            accumulators[i] += cmds[i].total_pulses;
-            if (accumulators[i] >= max_pulses) {
-                gpio_set_value(motors[i]->gpio_step, 1);
-                accumulators[i] -= max_pulses;
+            if (active[i] && !motor_states[cmds[i].motor_id].abort) {
+                accumulators[i] += cmds[i].total_pulses;
+                if (accumulators[i] >= max_pulses) {
+                    gpio_set_value(motors[i]->gpio_step, 1);  // Step high
+                    accumulators[i] -= max_pulses;
+                }
             }
         }
-        udelay(base_delay);
+        udelay(base_delay);  // High pulse duration
 
+        // Reset step pins for active motors
         for (i = 0; i < num_cmds; i++) {
-            gpio_set_value(motors[i]->gpio_step, 0);
+            if (active[i] && !motor_states[cmds[i].motor_id].abort) {
+                gpio_set_value(motors[i]->gpio_step, 0);  // Step low
+            }
         }
-        udelay(base_delay);
+        udelay(base_delay);  // Low pulse duration
     }
 
-    printk(KERN_INFO "stepper_control: Synchronized motion complete\n");
+    // Step 5: Ensure all step pins are low at the end
+    for (i = 0; i < num_cmds; i++) {
+        if (active[i]) {
+            gpio_set_value(motors[i]->gpio_step, 0);
+        }
+    }
+
+    printk(KERN_INFO "Synchronized motion complete\n");
 }
+
+
 
