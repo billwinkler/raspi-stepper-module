@@ -7,7 +7,7 @@
 #include "../include/delta_robot.h"
 #include "../include/stepper_control.h"
 
-// Global motor state array: now using macros from the config file
+// Global motor state array
 struct stepper_motor motor_states[MOTOR_COUNT] = {
     { .id = 0, .gpio_step = CONFIG_MOTOR0_STEP_PIN, .gpio_dir = CONFIG_MOTOR0_DIR_PIN },
     { .id = 1, .gpio_step = CONFIG_MOTOR1_STEP_PIN, .gpio_dir = CONFIG_MOTOR1_DIR_PIN },
@@ -15,6 +15,7 @@ struct stepper_motor motor_states[MOTOR_COUNT] = {
 };
 
 #define NS_PER_SEC 1000000000LL
+#define MIN_PHASE_PULSES 10  // Minimum pulses per phase for smoothness
 
 static ktime_t calculate_next_period(struct stepper_motor *state)
 {
@@ -22,8 +23,8 @@ static ktime_t calculate_next_period(struct stepper_motor *state)
     unsigned int total = state->total_pulses;
     unsigned int accel = state->accel_pulses;
     unsigned int decel = state->decel_pulses;
-    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY;
-    long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY;
+    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY;  // 200,000 ns
+    long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY;  // 1,000,000 ns
     long long period_accel = min_period;
     long long period_decel = min_period;
 
@@ -133,7 +134,6 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd)
     struct stepper_motor *motor;
     int limit_switch_pin;
 
-    // Validate motor ID
     if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
         printk(KERN_ERR "stepper_control: Invalid motor id %d\n", motor_id);
         return;
@@ -141,41 +141,57 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd)
 
     motor = &motor_states[motor_id];
 
-    // Set motor parameters
     motor->direction = cmd->direction;
     motor->total_pulses = cmd->total_pulses;
-    motor->accel_pulses = CONFIG_ACCELERATION_PULSES;
-    motor->decel_pulses = CONFIG_DECELERATION_PULSES;
     motor->pulse_count = 0;
     motor->abort = false;
 
-    // Set direction GPIO
+    // Dynamically adjust accel and decel pulses (same logic as above)
+    unsigned int default_accel = CONFIG_ACCELERATION_PULSES;
+    unsigned int default_decel = CONFIG_DECELERATION_PULSES;
+    unsigned int total = motor->total_pulses;
+
+    if (total <= 2 * MIN_PHASE_PULSES) {
+        motor->accel_pulses = total / 2;
+        motor->decel_pulses = total - motor->accel_pulses;
+    } else if (total < default_accel + default_decel) {
+        motor->accel_pulses = total / 2;
+        motor->decel_pulses = total - motor->accel_pulses;
+        if (motor->accel_pulses < MIN_PHASE_PULSES) {
+            motor->accel_pulses = MIN_PHASE_PULSES;
+            motor->decel_pulses = total - MIN_PHASE_PULSES;
+        }
+        if (motor->decel_pulses < MIN_PHASE_PULSES) {
+            motor->decel_pulses = MIN_PHASE_PULSES;
+            motor->accel_pulses = total - MIN_PHASE_PULSES;
+        }
+    } else {
+        motor->accel_pulses = default_accel;
+        motor->decel_pulses = default_decel;
+    }
+
     gpio_set_value(motor->gpio_dir, motor->direction);
 
-    // Determine limit switch pin
     switch (motor_id) {
         case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
         case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
         case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
-        default: return; // Shouldn’t happen due to prior validation
+        default: return;
     }
 
-    // Pre-check limit switch
     if (motor->direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
-        printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch already triggered\n", 
-               motor_id);
+        printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch already triggered\n", motor_id);
         return;
     }
 
-    // Log motion start
-    printk(KERN_INFO "stepper_control: Starting motor %d for %d pulses, direction %d\n",
-           motor_id, motor->total_pulses, motor->direction);
+    printk(KERN_INFO "stepper_control: Starting motor %d for %d pulses, accel=%d, decel=%d, direction %d\n",
+           motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction);
 
-    // Start the hrtimer
     hrtimer_start(&motor->timer, ktime_set(0, 0), HRTIMER_MODE_REL);
 }
 
-void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
+void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
+{
     int i;
 
     for (i = 0; i < num_cmds; i++) {
@@ -200,23 +216,49 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds) {
             continue;
         }
 
+        // Set direction and total pulses
         motor->direction = cmds[i].direction;
         motor->total_pulses = cmds[i].total_pulses;
-        motor->accel_pulses = CONFIG_ACCELERATION_PULSES;
-        motor->decel_pulses = CONFIG_DECELERATION_PULSES;
         motor->pulse_count = 0;
         motor->abort = false;
 
-        gpio_set_value(motor->gpio_dir, motor->direction);
-        printk(KERN_INFO "Starting motor %d: %d pulses, direction %d\n",
-               motor_id, motor->total_pulses, motor->direction);
+        // Dynamically adjust accel and decel pulses
+        unsigned int default_accel = CONFIG_ACCELERATION_PULSES;  // 150
+        unsigned int default_decel = CONFIG_DECELERATION_PULSES;  // 150
+        unsigned int total = motor->total_pulses;
 
+        if (total <= 2 * MIN_PHASE_PULSES) {
+            // Very small movement: split evenly
+            motor->accel_pulses = total / 2;
+            motor->decel_pulses = total - motor->accel_pulses;  // Exact total
+        } else if (total < default_accel + default_decel) {
+            // Small movement: scale to fit, ensure minimum
+            motor->accel_pulses = total / 2;
+            motor->decel_pulses = total - motor->accel_pulses;
+            if (motor->accel_pulses < MIN_PHASE_PULSES) {
+                motor->accel_pulses = MIN_PHASE_PULSES;
+                motor->decel_pulses = total - MIN_PHASE_PULSES;
+            }
+            if (motor->decel_pulses < MIN_PHASE_PULSES) {
+                motor->decel_pulses = MIN_PHASE_PULSES;
+                motor->accel_pulses = total - MIN_PHASE_PULSES;
+            }
+        } else {
+            // Large movement: use defaults
+            motor->accel_pulses = default_accel;
+            motor->decel_pulses = default_decel;
+        }
+
+        // Log adjusted parameters
+        printk(KERN_INFO "Starting motor %d: %d pulses, accel=%d, decel=%d, direction=%d\n",
+               motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction);
+
+        gpio_set_value(motor->gpio_dir, motor->direction);
         hrtimer_start(&motor->timer, ktime_set(0, 0), HRTIMER_MODE_REL);
     }
 
     printk(KERN_INFO "Synchronized motion initiated for %d motors\n", num_cmds);
 }
-
 
 
 
