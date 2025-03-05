@@ -73,6 +73,8 @@ static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
         return HRTIMER_RESTART;
     }
 
+    printk(KERN_INFO "Motor %d: Pulse %u, period=%lld ns, total=%u\n", state->id, state->pulse_count, period_k, state->total_pulses);
+    
     return HRTIMER_NORESTART;
 }
 
