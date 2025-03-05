@@ -3,10 +3,10 @@
 
 /* Configuration parameters for motor control */
 #define PULSE_WIDTH_US 100         // Fixed pulse width in microseconds
-#define CONFIG_MIN_FREQUENCY       1000.0   // Minimum frequency (Hz)
+#define CONFIG_MIN_FREQUENCY       1000.0  // Minimum frequency (Hz)
 #define CONFIG_MAX_FREQUENCY       5000.0  // Maximum frequency (Hz)
-#define CONFIG_ACCELERATION_PULSES 100   // Number of pulses during acceleration
-#define CONFIG_DECELERATION_PULSES 100   // Number of pulses during deceleration
+#define CONFIG_ACCELERATION_PULSES 150   // Number of pulses during acceleration
+#define CONFIG_DECELERATION_PULSES 150   // Number of pulses during deceleration
 
 /* Limit switch pin definitions */
 #define CONFIG_LIMIT_SWITCH1_PIN   22
