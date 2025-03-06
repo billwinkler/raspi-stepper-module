@@ -7,6 +7,9 @@
 #include <linux/delay.h>
 #include "../include/delta_robot.h"
 #include "../include/stepper_control.h"
+#ifndef STEPPER_CONTROL_H
+#error "stepper_control.h not included"
+#endif
 
 /* Forward declarations for submodule initializations */
 extern int limit_switch_init(void);
@@ -21,11 +24,13 @@ static int delta_robot_open(struct inode *inode, struct file *file)
     return 0;
 }
 
-static void test_gpio_toggle(void)
-{
-    int i;
-    int gpio = motor_states[1].gpio_step;  // Use motor 1's step pin for testing
-    printk(KERN_INFO "test_gpio_toggle: Starting toggle test on GPIO %d\n", gpio);
+static void test_gpio_toggle(void) {
+    int gpio = get_motor_step_pin(1);  // Use motor 1's step pin for testing
+    if (gpio < 0) {
+        printk(KERN_ERR "Invalid motor ID\n");
+        return;
+    }
+        printk(KERN_INFO "test_gpio_toggle: Starting toggle test on GPIO %d\n", gpio);
 
     for (i = 0; i < 10; i++) {
         gpio_set_value(gpio, 1);
