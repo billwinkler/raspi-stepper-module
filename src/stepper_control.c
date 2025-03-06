@@ -36,11 +36,11 @@ static ktime_t calculate_next_period(struct stepper_motor *state)
         period_accel = max_period - delta;
     }
     if (k >= total - decel && decel > 1) {
-        unsigned int m = total - 1 - k;
-        long long delta = (max_period - min_period) * m / (decel - 1);
-        period_decel = min_period + delta;
+      unsigned int m = total - 1 - k;
+      long long delta = (max_period - min_period) * (decel - 1 - m) / (decel - 1);  // Reverse m
+      period_decel = min_period + delta;
     }
-
+    
     long long period_k = (period_accel > period_decel) ? period_accel : period_decel;
     if (period_k > max_period)
         period_k = max_period;
