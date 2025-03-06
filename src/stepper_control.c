@@ -55,6 +55,8 @@ static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
 
     if (state->pulse_count >= state->total_pulses || state->abort) {
         gpio_set_value(state->gpio_step, 0);
+        printk(KERN_INFO "Motor %d: Motion stopped - pulse_count=%u, total=%u, abort=%d\n",
+               state->id, state->pulse_count, state->total_pulses, state->abort);
         return HRTIMER_NORESTART;
     }
 
@@ -70,11 +72,14 @@ static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
         if (ktime_compare(adjusted_delay, ktime_set(0, 0)) < 0)
             adjusted_delay = ktime_set(0, 0);
         hrtimer_start(timer, adjusted_delay, HRTIMER_MODE_REL);
+
+        // Extract nanoseconds from next_period for debugging
+        s64 period_ns = ktime_to_ns(next_period);
+        printk(KERN_INFO "Motor %d: Pulse %u, period=%lld ns, adjusted_delay=%lld ns, total=%u\n",
+               state->id, state->pulse_count, period_ns, ktime_to_ns(adjusted_delay), state->total_pulses);
         return HRTIMER_RESTART;
     }
 
-    printk(KERN_INFO "Motor %d: Pulse %u, period=%lld ns, total=%u\n", state->id, state->pulse_count, period_k, state->total_pulses);
-    
     return HRTIMER_NORESTART;
 }
 
