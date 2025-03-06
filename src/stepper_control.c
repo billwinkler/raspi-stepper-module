@@ -197,16 +197,72 @@ void start_motor_motion(int motor_id, struct delta_robot_cmd *cmd)
     hrtimer_start(&motor->timer, ktime_set(0, 0), HRTIMER_MODE_REL);
 }
 
+// Helper function to estimate motion duration in nanoseconds
+static long long estimate_motion_duration(unsigned int total_pulses, unsigned int accel_pulses, unsigned int decel_pulses)
+{
+    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY; // 200,000 ns
+    long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY; // 1,000,000 ns
+    long long avg_accel_period = (max_period + min_period) / 2; // Approx 600,000 ns
+    long long constant_pulses = total_pulses - accel_pulses - decel_pulses;
+    long long duration = 0;
+
+    if (constant_pulses < 0) constant_pulses = 0; // Handle cases where accel + decel > total
+
+    // Approximate duration: sum of average periods for accel, constant, and decel
+    duration += accel_pulses * avg_accel_period;           // Acceleration phase
+    duration += constant_pulses * min_period;              // Constant speed phase
+    duration += decel_pulses * avg_accel_period;           // Deceleration phase
+
+    return duration;
+}
+
 void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
 {
     int i;
+    struct hrtimer *timers[MOTOR_COUNT] = {NULL};
+    ktime_t sync_start_time = ktime_get();
+    long long max_duration = 0;
 
+    // Step 1: Determine the maximum duration
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
             printk(KERN_ERR "Invalid motor ID %d\n", motor_id);
             continue;
         }
+
+        struct stepper_motor *motor = &motor_states[motor_id];
+        unsigned int default_accel = CONFIG_ACCELERATION_PULSES;
+        unsigned int default_decel = CONFIG_DECELERATION_PULSES;
+        unsigned int total = cmds[i].total_pulses;
+
+        if (total <= 2 * MIN_PHASE_PULSES) {
+            motor->accel_pulses = total / 2;
+            motor->decel_pulses = total - motor->accel_pulses;
+        } else if (total < default_accel + default_decel) {
+            motor->accel_pulses = total / 2;
+            motor->decel_pulses = total - motor->accel_pulses;
+            if (motor->accel_pulses < MIN_PHASE_PULSES) {
+                motor->accel_pulses = MIN_PHASE_PULSES;
+                motor->decel_pulses = total - MIN_PHASE_PULSES;
+            }
+            if (motor->decel_pulses < MIN_PHASE_PULSES) {
+                motor->decel_pulses = MIN_PHASE_PULSES;
+                motor->accel_pulses = total - MIN_PHASE_PULSES;
+            }
+        } else {
+            motor->accel_pulses = default_accel;
+            motor->decel_pulses = default_decel;
+        }
+
+        long long duration = estimate_motion_duration(total, motor->accel_pulses, motor->decel_pulses);
+        if (duration > max_duration) max_duration = duration;
+    }
+
+    // Step 2: Adjust total_pulses for each motor to match max_duration
+    for (i = 0; i < num_cmds; i++) {
+        int motor_id = cmds[i].motor_id;
+        if (motor_id < 0 || motor_id >= MOTOR_COUNT) continue;
 
         struct stepper_motor *motor = &motor_states[motor_id];
         int limit_switch_pin;
@@ -223,49 +279,36 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
             continue;
         }
 
-        // Set direction and total pulses
         motor->direction = cmds[i].direction;
         motor->total_pulses = cmds[i].total_pulses;
         motor->pulse_count = 0;
         motor->abort = false;
 
-        // Dynamically adjust accel and decel pulses
-        unsigned int default_accel = CONFIG_ACCELERATION_PULSES;  // 150
-        unsigned int default_decel = CONFIG_DECELERATION_PULSES;  // 150
-        unsigned int total = motor->total_pulses;
-
-        if (total <= 2 * MIN_PHASE_PULSES) {
-            // Very small movement: split evenly
-            motor->accel_pulses = total / 2;
-            motor->decel_pulses = total - motor->accel_pulses;  // Exact total
-        } else if (total < default_accel + default_decel) {
-            // Small movement: scale to fit, ensure minimum
-            motor->accel_pulses = total / 2;
-            motor->decel_pulses = total - motor->accel_pulses;
-            if (motor->accel_pulses < MIN_PHASE_PULSES) {
-                motor->accel_pulses = MIN_PHASE_PULSES;
-                motor->decel_pulses = total - MIN_PHASE_PULSES;
-            }
-            if (motor->decel_pulses < MIN_PHASE_PULSES) {
-                motor->decel_pulses = MIN_PHASE_PULSES;
-                motor->accel_pulses = total - MIN_PHASE_PULSES;
-            }
-        } else {
-            // Large movement: use defaults
-            motor->accel_pulses = default_accel;
-            motor->decel_pulses = default_decel;
+        long long current_duration = estimate_motion_duration(motor->total_pulses, motor->accel_pulses, motor->decel_pulses);
+        if (current_duration < max_duration) {
+            // Calculate additional pulses needed at constant speed
+            long long extra_time = max_duration - current_duration;
+            long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY; // 200,000 ns
+            unsigned int extra_pulses = extra_time / min_period;
+            motor->total_pulses += extra_pulses;
         }
 
-        // Log adjusted parameters
         printk(KERN_INFO "Starting motor %d: %d pulses, accel=%d, decel=%d, direction=%d\n",
                motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction);
 
         gpio_set_value(motor->gpio_dir, motor->direction);
-        hrtimer_start(&motor->timer, ktime_set(0, 0), HRTIMER_MODE_REL);
+        timers[motor_id] = &motor->timer; // Store timer for later start
+    }
+
+    // Step 3: Start all timers simultaneously
+    for (i = 0; i < num_cmds; i++) {
+        int motor_id = cmds[i].motor_id;
+        if (timers[motor_id]) {
+            hrtimer_start(timers[motor_id], ktime_set(0, 0), HRTIMER_MODE_REL);
+        }
     }
 
     printk(KERN_INFO "Synchronized motion initiated for %d motors\n", num_cmds);
 }
-
 
 
