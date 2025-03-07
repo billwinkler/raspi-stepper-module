@@ -24,13 +24,17 @@ static int delta_robot_open(struct inode *inode, struct file *file)
     return 0;
 }
 
-static void test_gpio_toggle(void) {
+static void test_gpio_toggle(void)
+{
+    int i; // Declare loop variable at the beginning (C90 compliance)
     int gpio = get_motor_step_pin(1);  // Use motor 1's step pin for testing
+
     if (gpio < 0) {
         printk(KERN_ERR "Invalid motor ID\n");
         return;
     }
-        printk(KERN_INFO "test_gpio_toggle: Starting toggle test on GPIO %d\n", gpio);
+
+    printk(KERN_INFO "test_gpio_toggle: Starting toggle test on GPIO %d\n", gpio);
 
     for (i = 0; i < 10; i++) {
         gpio_set_value(gpio, 1);
@@ -110,7 +114,7 @@ static int __init delta_robot_init(void)
     ret = misc_register(&delta_robot_misc);
     if (ret) return ret;
 
-   // Call the test function
+    // Call the test function
     test_gpio_toggle();
 
     printk(KERN_INFO "Delta Robot Module: Initialization complete\n");
@@ -131,4 +135,4 @@ module_exit(delta_robot_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Bill Winkler");
 MODULE_DESCRIPTION("Delta Robot Control Module with Stepper and Limit Switch Integration");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.1");
