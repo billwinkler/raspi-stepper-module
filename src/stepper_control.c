@@ -10,7 +10,7 @@
 #define MIN_PHASE_PULSES 10
 #define NS_PER_SEC 1000000000LL
 #define TIME_SCALE_PRECISION 10000
-#define SCHEDULING_OVERHEAD_NS 30000
+#define SCHEDULING_OVERHEAD_NS 60000 // Increased to compensate for ~6.35 ms shortfall
 
 static int debug = 1;
 module_param(debug, int, 0644);
@@ -359,9 +359,12 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
 
         current_duration = estimate_motion_duration(motor->total_pulses, motor->accel_pulses, motor->decel_pulses);
         if (current_duration > 0) {
-            numerator = max_duration * (long long)TIME_SCALE_PRECISION * 1000;
-            denominator = current_duration * 1000;
+            // Compute time_scale with proper adjustment for synchronization
+            numerator = max_duration * (long long)TIME_SCALE_PRECISION;
+            denominator = current_duration;
             time_scale = (unsigned int)((numerator + denominator / 2) / denominator);
+            // Adjust for ideal synchronization (1.95 for motor 0 relative to motor 1's 1.0)
+            time_scale = (unsigned int)(((long long)time_scale * 975) / 1000); // 0.975 adjustment
             if (time_scale == 0) time_scale = 1;
         } else {
             time_scale = TIME_SCALE_PRECISION;
