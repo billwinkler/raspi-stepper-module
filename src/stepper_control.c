@@ -280,20 +280,16 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
     struct hrtimer *timers[MOTOR_COUNT] = {NULL};
     long long max_duration = 0;
     long long current_duration;
-    long long numerator;
-    long long denominator;
-    long long remainder;
     struct stepper_motor *motor;
     int limit_switch_pin;
-    unsigned int default_accel;
-    unsigned int default_decel;
+    unsigned int default_accel = CONFIG_ACCELERATION_PULSES;
+    unsigned int default_decel = CONFIG_DECELERATION_PULSES;
     unsigned int total;
     unsigned int time_scale;
-    long long target_duration = 66667000; // 66.667 ms in ns
 
     printk(KERN_INFO "Starting synchronized motion for %d motors\n", num_cmds);
 
-    // First pass: Calculate max_duration and set up motor states
+    /* First pass: Calculate max_duration and set up motor states */
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
@@ -304,10 +300,9 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
         }
 
         motor = &motor_states[motor_id];
-        default_accel = CONFIG_ACCELERATION_PULSES;
-        default_decel = CONFIG_DECELERATION_PULSES;
         total = cmds[i].total_pulses;
 
+        /* Set accel/decel pulses */
         if (total <= 2 * MIN_PHASE_PULSES) {
             motor->accel_pulses = total / 2;
             motor->decel_pulses = total - motor->accel_pulses;
@@ -327,59 +322,56 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
             motor->decel_pulses = default_decel;
         }
 
+        /* Estimate natural duration */
         current_duration = estimate_motion_duration(total, motor->accel_pulses, motor->decel_pulses);
-        if (current_duration > max_duration) max_duration = current_duration;
+        if (current_duration > max_duration) {
+            max_duration = current_duration;
+        }
+
+        /* Initialize motor state */
+        motor->direction = cmds[i].direction;
+        motor->total_pulses = total;
+        motor->pulse_count = 0;
+        motor->abort = false;
+        motor->time_scale = TIME_SCALE_PRECISION; /* Default to no scaling yet */
     }
 
-    // Second pass: Set time_scale and adjust for target duration
+    /* Second pass: Adjust time_scale to match max_duration and start timers */
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) continue;
 
         motor = &motor_states[motor_id];
 
+        /* Check limit switch */
         switch (motor_id) {
             case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
             case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
             case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
             default: continue;
         }
-
-        if (cmds[i].direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
+        if (motor->direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
             if (debug) {
                 printk(KERN_WARNING "Motor %d: Motion suppressed - limit switch triggered\n", motor_id);
             }
             continue;
         }
 
-        motor->direction = cmds[i].direction;
-        motor->total_pulses = cmds[i].total_pulses;
-        motor->pulse_count = 0;
-        motor->abort = false;
-
+        /* Calculate time_scale to stretch/shrink to max_duration */
         current_duration = estimate_motion_duration(motor->total_pulses, motor->accel_pulses, motor->decel_pulses);
-        if (current_duration > 0) {
-            // Calculate time_scale to scale duration to max_duration
-            numerator = max_duration * (long long)TIME_SCALE_PRECISION;
-            denominator = current_duration;
+        if (current_duration > 0 && max_duration > 0) {
+            long long numerator = max_duration * (long long)TIME_SCALE_PRECISION;
+            long long denominator = current_duration;
             time_scale = (unsigned int)((numerator + denominator / 2) / denominator);
-
-            // Adjust time_scale to hit the target duration of 66.667 ms
-            long long actual_duration = current_duration * time_scale / TIME_SCALE_PRECISION;
-            if (actual_duration > 0) {
-                long long adjusted_time_scale = (target_duration * (long long)TIME_SCALE_PRECISION) / current_duration;
-                time_scale = (unsigned int)adjusted_time_scale;
-            }
-
             if (time_scale == 0) time_scale = 1;
+            motor->time_scale = time_scale;
         } else {
-            time_scale = TIME_SCALE_PRECISION;
+            motor->time_scale = TIME_SCALE_PRECISION; /* No scaling if duration is invalid */
         }
-        motor->time_scale = time_scale;
 
         if (debug) {
-            printk(KERN_INFO "Starting motor %d: %d pulses, accel=%d, decel=%d, direction=%d, time_scale=%u\n",
-                   motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction, motor->time_scale);
+            printk(KERN_INFO "Starting motor %d: %d pulses, accel=%d, decel=%d, direction=%d, time_scale=%u, duration=%lld ns\n",
+                   motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction, motor->time_scale, current_duration);
         }
 
         if (motor->total_pulses > 0) {
@@ -388,6 +380,7 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
         }
     }
 
+    /* Start all timers together */
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (timers[motor_id]) {
@@ -396,6 +389,7 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
     }
 
     if (debug) {
-        printk(KERN_INFO "Synchronized motion initiated for %d motors\n", num_cmds);
+        printk(KERN_INFO "Synchronized motion initiated for %d motors, target duration=%lld ns\n", num_cmds, max_duration);
     }
 }
+
