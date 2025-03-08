@@ -10,7 +10,7 @@
 #define MIN_PHASE_PULSES 10
 #define NS_PER_SEC 1000000000LL
 #define TIME_SCALE_PRECISION 10000
-#define SCHEDULING_OVERHEAD_NS 60000 // Increased to compensate for ~6.35 ms shortfall
+#define SCHEDULING_OVERHEAD_NS 100000 // Increased to 100 µs per pulse
 
 static int debug = 1;
 module_param(debug, int, 0644);
@@ -83,10 +83,8 @@ static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
     if (state->pulse_count >= state->total_pulses || state->abort) {
         gpio_set_value(state->gpio_step, 0);
         stop_time = ktime_get();
-        if (debug) {
-            printk(KERN_INFO "Motor %d: Motion stopped at %lld ns - pulse_count=%u, total=%u, abort=%d\n",
-                   state->id, ktime_to_ns(stop_time), state->pulse_count, state->total_pulses, state->abort);
-        }
+        printk(KERN_INFO "Motor %d: Motion stopped at %lld ns - pulse_count=%u, total=%u, abort=%d\n",
+               state->id, ktime_to_ns(stop_time), state->pulse_count, state->total_pulses, state->abort);
         return HRTIMER_NORESTART;
     }
 
@@ -295,6 +293,8 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
     unsigned int total;
     unsigned int time_scale;
 
+    printk(KERN_INFO "Starting synchronized motion for %d motors\n", num_cmds);
+
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
@@ -359,12 +359,9 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
 
         current_duration = estimate_motion_duration(motor->total_pulses, motor->accel_pulses, motor->decel_pulses);
         if (current_duration > 0) {
-            // Compute time_scale with proper adjustment for synchronization
             numerator = max_duration * (long long)TIME_SCALE_PRECISION;
             denominator = current_duration;
             time_scale = (unsigned int)((numerator + denominator / 2) / denominator);
-            // Adjust for ideal synchronization (1.95 for motor 0 relative to motor 1's 1.0)
-            time_scale = (unsigned int)(((long long)time_scale * 975) / 1000); // 0.975 adjustment
             if (time_scale == 0) time_scale = 1;
         } else {
             time_scale = TIME_SCALE_PRECISION;
