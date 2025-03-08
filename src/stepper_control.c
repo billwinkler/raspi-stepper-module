@@ -10,7 +10,7 @@
 #define MIN_PHASE_PULSES 10
 #define NS_PER_SEC 1000000000LL
 #define TIME_SCALE_PRECISION 10000
-#define SCHEDULING_OVERHEAD_NS 30000 // Empirical adjustment for timer overhead
+#define SCHEDULING_OVERHEAD_NS 30000
 
 static int debug = 1;
 module_param(debug, int, 0644);
@@ -362,7 +362,6 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
             numerator = max_duration * (long long)TIME_SCALE_PRECISION * 1000;
             denominator = current_duration * 1000;
             time_scale = (unsigned int)((numerator + denominator / 2) / denominator);
-            time_scale = (time_scale * TIME_SCALE_PRECISION) / 1000;
             if (time_scale == 0) time_scale = 1;
         } else {
             time_scale = TIME_SCALE_PRECISION;
