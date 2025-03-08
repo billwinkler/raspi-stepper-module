@@ -10,7 +10,6 @@
 #define MIN_PHASE_PULSES 10
 #define NS_PER_SEC 1000000000LL
 #define TIME_SCALE_PRECISION 10000
-#define SCHEDULING_OVERHEAD_NS 100000 // Increased to 100 µs per pulse
 
 static int debug = 1;
 module_param(debug, int, 0644);
@@ -56,8 +55,6 @@ static ktime_t calculate_next_period(struct stepper_motor *state)
     if (period_k > max_period * time_scale / TIME_SCALE_PRECISION)
         period_k = max_period * time_scale / TIME_SCALE_PRECISION;
     if (period_k < min_period) period_k = min_period;
-
-    period_k += SCHEDULING_OVERHEAD_NS;
 
     return ktime_set(0, period_k);
 }
@@ -292,9 +289,11 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
     unsigned int default_decel;
     unsigned int total;
     unsigned int time_scale;
+    long long target_duration = 66667000; // 66.667 ms in ns
 
     printk(KERN_INFO "Starting synchronized motion for %d motors\n", num_cmds);
 
+    // First pass: Calculate max_duration and set up motor states
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) {
@@ -332,6 +331,7 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
         if (current_duration > max_duration) max_duration = current_duration;
     }
 
+    // Second pass: Set time_scale and adjust for target duration
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) continue;
@@ -359,9 +359,18 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
 
         current_duration = estimate_motion_duration(motor->total_pulses, motor->accel_pulses, motor->decel_pulses);
         if (current_duration > 0) {
+            // Calculate time_scale to scale duration to max_duration
             numerator = max_duration * (long long)TIME_SCALE_PRECISION;
             denominator = current_duration;
             time_scale = (unsigned int)((numerator + denominator / 2) / denominator);
+
+            // Adjust time_scale to hit the target duration of 66.667 ms
+            long long actual_duration = current_duration * time_scale / TIME_SCALE_PRECISION;
+            if (actual_duration > 0) {
+                long long adjusted_time_scale = (target_duration * (long long)TIME_SCALE_PRECISION) / current_duration;
+                time_scale = (unsigned int)adjusted_time_scale;
+            }
+
             if (time_scale == 0) time_scale = 1;
         } else {
             time_scale = TIME_SCALE_PRECISION;
