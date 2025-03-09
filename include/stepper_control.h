@@ -17,6 +17,7 @@ struct stepper_motor {
     bool abort;
     struct hrtimer timer;
     unsigned int time_scale; // Fixed-point: scale factor * 1000
+    ktime_t last_debug_time;  //Stores the timestamp to enable freq calculation in debug message
 };
 
 extern struct stepper_motor motor_states[MOTOR_COUNT];

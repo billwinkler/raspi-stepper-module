@@ -7,6 +7,9 @@
 #include "../include/delta_robot.h"
 #include "../include/stepper_control.h"
 
+// Forward declaration of estimate_motion_duration
+static long long estimate_motion_duration(unsigned int total_pulses, unsigned int accel_pulses, unsigned int decel_pulses);
+
 #define MIN_PHASE_PULSES 10
 #define NS_PER_SEC 1000000000LL
 #define TIME_SCALE_PRECISION 10000
@@ -23,85 +26,88 @@ struct stepper_motor motor_states[MOTOR_COUNT] = {
 
 static ktime_t calculate_next_period(struct stepper_motor *state)
 {
+    /* Declare all variables at the top */
     unsigned int k = state->pulse_count;
     unsigned int total = state->total_pulses;
     unsigned int accel = state->accel_pulses;
     unsigned int decel = state->decel_pulses;
-    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY;  // 200,000 ns
-    long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY;  // 1,000,000 ns
+    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY;
+    long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY;
     long long period_accel = min_period;
     long long period_decel = min_period;
     long long period_k;
     unsigned int time_scale = state->time_scale;
+    long long next_period_ns;  /* Declaration moved here */
 
+    /* Executable code starts here */
     if (total <= 1 || k >= total)
         return ktime_set(0, 0);
 
     if (k < accel && accel > 1) {
         long long delta = (max_period - min_period) * k / (accel - 1);
         period_accel = max_period - delta;
-        period_accel = (period_accel * time_scale) / TIME_SCALE_PRECISION;
-        if (period_accel < min_period) period_accel = min_period;
     }
     if (k >= total - decel && decel > 1) {
         unsigned int m = total - 1 - k;
         long long delta = (max_period - min_period) * (decel - 1 - m) / (decel - 1);
         period_decel = min_period + delta;
-        period_decel = (period_decel * time_scale) / TIME_SCALE_PRECISION;
-        if (period_decel < min_period) period_decel = min_period;
     }
 
     period_k = (period_accel > period_decel) ? period_accel : period_decel;
-    if (period_k > max_period * time_scale / TIME_SCALE_PRECISION)
-        period_k = max_period * time_scale / TIME_SCALE_PRECISION;
-    if (period_k < min_period) period_k = min_period;
+    period_k = (period_k * time_scale) / TIME_SCALE_PRECISION;
 
-    return ktime_set(0, period_k);
+    /* Assign value to next_period_ns here */
+    next_period_ns = period_k - (PULSE_WIDTH_US * 1000LL);
+    if (next_period_ns < 0)
+        next_period_ns = 0;
+
+    return ktime_set(0, next_period_ns);
 }
 
 static enum hrtimer_restart motor_timer_callback(struct hrtimer *timer)
 {
     struct stepper_motor *state = container_of(timer, struct stepper_motor, timer);
     ktime_t next_period;
-    ktime_t adjusted_delay;
     ktime_t stop_time;
 
     gpio_set_value(state->gpio_step, 1);
-    udelay(PULSE_WIDTH_US);
+    udelay(PULSE_WIDTH_US);  // 100 µs
     stop_time = ktime_get();
     gpio_set_value(state->gpio_step, 0);
 
     state->pulse_count++;
 
     if (debug && (state->pulse_count % 10 == 0 || state->pulse_count == 1)) {
-        printk(KERN_DEBUG "Motor %d: Pulse %u at %lld ns\n", state->id, state->pulse_count, ktime_to_ns(stop_time));
+      if (state->pulse_count == 1) {
+        // First pulse: no frequency available
+        printk(KERN_DEBUG "Motor %d: Pulse %u at %lld ns\n",
+               state->id, state->pulse_count, ktime_to_ns(stop_time));
+      } else {
+        // Every 10th pulse: calculate and include frequency
+        long long delta = ktime_to_ns(stop_time) - ktime_to_ns(state->last_debug_time);
+        if (delta > 0) {
+          long long freq_hz = 10000000000LL / delta;  // Frequency in Hz
+          printk(KERN_DEBUG "Motor %d: Pulse %u at %lld ns, approx freq of last 10 pulses: %lld Hz\n",
+                 state->id, state->pulse_count, ktime_to_ns(stop_time), freq_hz);
+        } else {
+          // Fallback if delta is invalid (shouldn’t happen after pulse 1)
+          printk(KERN_DEBUG "Motor %d: Pulse %u at %lld ns\n",
+                 state->id, state->pulse_count, ktime_to_ns(stop_time));
+        }
+      }
+      state->last_debug_time = stop_time;  // Update for the next print
     }
 
     if (state->pulse_count >= state->total_pulses || state->abort) {
-        gpio_set_value(state->gpio_step, 0);
-        stop_time = ktime_get();
         printk(KERN_INFO "Motor %d: Motion stopped at %lld ns - pulse_count=%u, total=%u, abort=%d\n",
                state->id, ktime_to_ns(stop_time), state->pulse_count, state->total_pulses, state->abort);
         return HRTIMER_NORESTART;
     }
 
     next_period = calculate_next_period(state);
-    if (next_period <= 0) {
-        if (debug) {
-            printk(KERN_WARNING "Motor %d: Next period invalid, forcing stop\n", state->id);
-        }
-        return HRTIMER_NORESTART;
-    }
+    if (next_period <= 0) return HRTIMER_NORESTART;
 
-    adjusted_delay = ktime_sub(next_period, ktime_set(0, PULSE_WIDTH_US * 1000));
-    if (ktime_compare(adjusted_delay, ktime_set(0, 0)) < 0) {
-        if (debug) {
-            printk(KERN_WARNING "Motor %d: Adjusted delay negative, forcing stop\n", state->id);
-        }
-        return HRTIMER_NORESTART;
-    }
-
-    hrtimer_start(timer, adjusted_delay, HRTIMER_MODE_REL);
+    hrtimer_start(timer, next_period, HRTIMER_MODE_REL); // Revert to original
     return HRTIMER_RESTART;
 }
 
@@ -236,25 +242,17 @@ int get_motor_step_pin(int motor_id)
 
 static long long estimate_motion_duration(unsigned int total_pulses, unsigned int accel_pulses, unsigned int decel_pulses)
 {
-    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY; // 200,000 ns
+    long long min_period = NS_PER_SEC / CONFIG_MAX_FREQUENCY; // 500,000 ns
     long long max_period = NS_PER_SEC / CONFIG_MIN_FREQUENCY; // 1,000,000 ns
     long long duration = 0;
+    long long pulse_overhead = 113909; // Adjusted to match actual
     unsigned int constant_pulses = total_pulses > (accel_pulses + decel_pulses) ? total_pulses - accel_pulses - decel_pulses : 0;
 
     if (total_pulses <= 1) return 0;
 
-    // Acceleration phase
-    if (accel_pulses > 0) {
-        duration += ((max_period + min_period) * accel_pulses) / 2; // Trapezoidal average
-    }
-
-    // Constant phase
-    duration += constant_pulses * min_period;
-
-    // Deceleration phase
-    if (decel_pulses > 0) {
-        duration += ((min_period + max_period) * decel_pulses) / 2;
-    }
+    duration += ((max_period + min_period) * accel_pulses) / 2 + accel_pulses * pulse_overhead;
+    duration += constant_pulses * (min_period + pulse_overhead);
+    duration += ((min_period + max_period) * decel_pulses) / 2 + decel_pulses * pulse_overhead;
 
     return duration;
 }
@@ -273,6 +271,7 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
 
     printk(KERN_INFO "Starting synchronized motion for %d motors\n", num_cmds);
 
+    // First pass: Calculate natural durations and find max_duration
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) continue;
@@ -280,6 +279,7 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
         motor = &motor_states[motor_id];
         total = cmds[i].total_pulses;
 
+        // Set accel_pulses and decel_pulses based on total_pulses
         if (total <= 2 * MIN_PHASE_PULSES) {
             motor->accel_pulses = total / 2;
             motor->decel_pulses = total - motor->accel_pulses;
@@ -306,34 +306,24 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
         motor->total_pulses = total;
         motor->pulse_count = 0;
         motor->abort = false;
-        motor->time_scale = TIME_SCALE_PRECISION;
     }
 
+    // Second pass: Set time_scale for each motor based on max_duration
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (motor_id < 0 || motor_id >= MOTOR_COUNT) continue;
 
         motor = &motor_states[motor_id];
-        switch (motor_id) {
-            case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
-            case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
-            case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
-            default: continue;
-        }
-        if (motor->direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
-            if (debug) printk(KERN_WARNING "Motor %d: Motion suppressed\n", motor_id);
-            continue;
-        }
-
         current_duration = estimate_motion_duration(motor->total_pulses, motor->accel_pulses, motor->decel_pulses);
-        if (current_duration > 0 && max_duration > 0) {
+        if (current_duration > 0) {
             motor->time_scale = (unsigned int)(((max_duration * (long long)TIME_SCALE_PRECISION) + (current_duration / 2)) / current_duration);
-            if (motor->time_scale < 1) motor->time_scale = 1;
+        } else {
+            motor->time_scale = TIME_SCALE_PRECISION; // Default if no pulses
         }
 
         if (debug) {
-            printk(KERN_INFO "Starting motor %d: %u pulses, accel=%u, decel=%u, dir=%d, time_scale=%u, duration=%lld ns\n",
-                   motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction, motor->time_scale, current_duration);
+            printk(KERN_INFO "Starting motor %d: %u pulses, accel=%u, decel=%u, dir=%d, time_scale=%u, natural_duration=%lld ns, target_duration=%lld ns\n",
+                   motor_id, motor->total_pulses, motor->accel_pulses, motor->decel_pulses, motor->direction, motor->time_scale, current_duration, max_duration);
         }
 
         if (motor->total_pulses > 0) {
@@ -342,9 +332,20 @@ void start_synchronized_motion(struct delta_robot_cmd cmds[], int num_cmds)
         }
     }
 
+    // Start timers for all motors
     for (i = 0; i < num_cmds; i++) {
         int motor_id = cmds[i].motor_id;
         if (timers[motor_id]) {
+            switch (motor_id) {
+                case 0: limit_switch_pin = CONFIG_LIMIT_SWITCH1_PIN; break;
+                case 1: limit_switch_pin = CONFIG_LIMIT_SWITCH2_PIN; break;
+                case 2: limit_switch_pin = CONFIG_LIMIT_SWITCH3_PIN; break;
+                default: continue;
+            }
+            if (motor->direction == 1 && gpio_get_value(limit_switch_pin) == 0) {
+                if (debug) printk(KERN_WARNING "Motor %d: Motion suppressed\n", motor_id);
+                continue;
+            }
             hrtimer_start(timers[motor_id], ktime_set(0, 0), HRTIMER_MODE_REL);
         }
     }
