@@ -1,6 +1,6 @@
 # Raspi Stepper Module
 
-This repository contains a Linux kernel module designed for controlling stepper motors on a Raspberry Pi. Originally developed for delta robot applications, the module integrates both stepper motor control and limit switch monitoring to provide coordinated and safe motion control.  It is currently a work-in-progress.
+This repository contains a Linux kernel module designed for controlling stepper motors on a Raspberry Pi. Originally developed for delta robot applications, the module integrates both stepper motor control and limit switch monitoring to provide coordinated and safe motion control.  
 
 ## Features
 
@@ -54,8 +54,9 @@ This repository contains a Linux kernel module designed for controlling stepper 
 3. **Load the Kernel Module:**
 Insert the module into the kernel:
    ```bash
-   sudo insmod delta_robot.ko
+   sudo insmod delta_robot.ko debug=0
    ```
+Use debug=1 to log pulse timing messages.   
 4. **Verify the Module:**
    Check that the module has loaded correctly:
    ```bash
@@ -65,22 +66,23 @@ Insert the module into the kernel:
    The module creates a device file at `/dev/delta_robot` for user-space interaction.
    
 ## Configuration
-## Configuration
 
 The delta robot module's key parameters are centralized in the `delta_robot_config.h` file. This file lets you customize settings for motor control, limit switch pin assignments, and stepper motor GPIO configurations to match your specific hardware setup.
 
 ### Motor Control Parameters
 
-- **CONFIG_MIN_FREQUENCY (100 Hz):**  
-  Specifies the minimum operating frequency for the stepper motors. Lower frequencies help ensure smooth startup and stable low-speed performance. This is intended to be (not yet implemented) the starting and ending frequencies for ramping up and down pulses during accleration and deceleration.
+- **PULSE_WIDTH_US**
+  Sets the positive voltage pulse duration.  Pulse cycle frequencies are adjusted by changing the zero voltage duration.
+- **CONFIG_MIN_FREQUENCY (500 Hz):**  
+  Specifies the minimum operating frequency for the stepper motors. Lower frequencies help ensure smooth startup and stable low-speed performance. This is the starting and ending frequencies for ramping up and down pulses during accleration and deceleration.
 
-- **CONFIG_MAX_FREQUENCY (5000 Hz):**  
-  Sets the maximum frequency for the motors, which limits the top speed. It is used as the target frequency for the motors after accleration from the minimum specified frequency.
+- **CONFIG_MAX_FREQUENCY (2000 Hz):**  
+  Sets the maximum frequency for the motors, which limits the top speed. It is used as the target frequency for the motors after accleration from the minimum specified frequency.  2000 hz is the practical upper limit for a Raspberry Pi 4 using this technique to generate pulses.  These seems to be a reasonable pulse rate when used in combination with stepper motor drivers set to 1600 pulses per revolution.
 
-- **CONFIG_ACCELERATION_PULSES (200 pulses):**  
+- **CONFIG_ACCELERATION_PULSES (150 pulses):**  
   Determines the number of pulses used during the acceleration phase. This helps in gradually ramping up the motor speed, reducing mechanical stress.
 
-- **CONFIG_DECELERATION_PULSES (200 pulses):**  
+- **CONFIG_DECELERATION_PULSES (150 pulses):**  
   Specifies the number of pulses during deceleration, ensuring a controlled slowdown to prevent overshooting or undue wear on the hardware.
 
 ### Limit Switch Pin Definitions
